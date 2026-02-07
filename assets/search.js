@@ -3,9 +3,12 @@
  * Implements global search with lazy loading index and client-side filtering.
  */
 (() => {
+    const { escapeHTML, highlightText } = NCEUtils;
+
     const SEARCH_INDEX_URL = 'static/search_index.json';
     let searchIndex = null;
     let isLoading = false;
+    let loadFailed = false;
     let debounceTimer = null;
 
     // DOM Elements
@@ -27,6 +30,7 @@
     async function loadIndex() {
         if (searchIndex) return;
         if (isLoading) return;
+        if (loadFailed) return;
 
         isLoading = true;
         try {
@@ -35,7 +39,10 @@
             searchIndex = await res.json();
         } catch (e) {
             console.error('Search index load failed:', e);
-            searchResults.innerHTML = '<div style="padding:20px;text-align:center;color:var(--muted)">搜索服务暂时不可用</div>';
+            loadFailed = true;
+            loadingState.hidden = true;
+            emptyState.hidden = true;
+            resultsContainer.innerHTML = '<div style="padding:20px;text-align:center;color:var(--muted)">搜索服务暂时不可用</div>';
         } finally {
             isLoading = false;
         }
@@ -70,6 +77,13 @@
             resultsContainer.innerHTML = '';
             emptyState.hidden = true;
             loadingState.hidden = true;
+            return;
+        }
+
+        if (loadFailed) {
+            loadingState.hidden = true;
+            emptyState.hidden = true;
+            resultsContainer.innerHTML = '<div style="padding:20px;text-align:center;color:var(--muted)">搜索服务暂时不可用</div>';
             return;
         }
 
@@ -133,16 +147,6 @@
         return matches;
     }
 
-    function highlightText(text, query) {
-        if (!query) return text;
-        const regex = new RegExp(`(${escapeRegExp(query)})`, 'gi');
-        return text.replace(regex, '<span class="search-highlight">$1</span>');
-    }
-
-    function escapeRegExp(string) {
-        return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    }
-
     function renderResults(results, query) {
         if (results.length === 0) {
             resultsContainer.innerHTML = '';
@@ -151,6 +155,10 @@
         }
 
         emptyState.hidden = true;
+
+        function safeHighlight(text, q) {
+            return highlightText(escapeHTML(String(text || '')), q);
+        }
 
         const html = results.map(item => {
             const bookName = {
@@ -161,8 +169,8 @@
 
             let contentHtml = '';
             if (item.type === 'sentence') {
-                const enHtml = item.matchEn ? highlightText(item.en, query) : item.en;
-                const cnHtml = item.matchCn ? highlightText(item.cn, query) : item.cn;
+                const enHtml = item.matchEn ? safeHighlight(item.en, query) : escapeHTML(String(item.en || ''));
+                const cnHtml = item.matchCn ? safeHighlight(item.cn, query) : escapeHTML(String(item.cn || ''));
                 contentHtml = `
           <div class="search-item-content">
             <div style="margin-bottom:2px;color:var(--text)">${enHtml}</div>
@@ -173,7 +181,9 @@
                 contentHtml = `<div class="search-item-content">包含匹配的标题</div>`;
             }
 
-            const titleHtml = highlightText(item.title, item.type === 'title' ? query : '');
+            const titleHtml = item.type === 'title'
+                ? safeHighlight(item.title, query)
+                : escapeHTML(String(item.title || ''));
 
             return `
         <a href="${link}" class="search-item" onclick="document.getElementById('searchModal').click()"> <!-- Hack to close modal implicitly? No better add explicit handler -->
